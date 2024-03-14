@@ -171,7 +171,7 @@ namespace PowerManagement.ApiWrapper.Tests
         [ExpectedException(typeof(Win32Exception))]
         public void SetPlanSetting_Given_NonExitentPlan_Throws_Win32Exception()
         {
-            PowerManager.SetPlanSetting(_nonExistentPlanGuid1, SettingSubgroup.SYSTEM_BUTTON_SUBGROUP, Setting.LIDACTION, PowerMode.AC, 0);
+            PowerManager.SetPlanSetting(_nonExistentPlanGuid1, SettingSubgroup.BUTTONS_SUBGROUP, Setting.LIDACTION, PowerMode.AC, 0);
         }
 
         [TestMethod]
@@ -195,7 +195,7 @@ namespace PowerManagement.ApiWrapper.Tests
             var planId = PowerManager.DuplicatePlan(_balancedPlanGuid, _nonExistentPlanGuid1);
             try
             {
-                var subgroup = SettingSubgroup.SYSTEM_BUTTON_SUBGROUP;
+                var subgroup = SettingSubgroup.BUTTONS_SUBGROUP;
                 var setting = Setting.PBUTTONACTION;
 
 
@@ -217,7 +217,7 @@ namespace PowerManagement.ApiWrapper.Tests
         [ExpectedException(typeof(ArgumentException))]
         public void GetPlanSetting_Given_AcAndDc_Throws_ArgumentException()
         {
-            PowerManager.GetPlanSetting(_balancedPlanGuid, SettingSubgroup.SYSTEM_BUTTON_SUBGROUP, Setting.LIDACTION, PowerMode.AC | PowerMode.DC);
+            PowerManager.GetPlanSetting(_balancedPlanGuid, SettingSubgroup.BUTTONS_SUBGROUP, Setting.LIDACTION, PowerMode.AC | PowerMode.DC);
         }
 
         [TestMethod]

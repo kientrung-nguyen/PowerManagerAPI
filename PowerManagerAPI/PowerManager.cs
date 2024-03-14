@@ -47,6 +47,23 @@ namespace PowerManagerAPI
                 throw new Win32Exception((int)res);
         }
 
+        public static Guid GetPowerMode()
+        {
+            var res = PowerGetEffectiveOverlayScheme(out Guid effectiveOverlayGuid);
+            if (res != (uint)ErrorCode.SUCCESS)
+                throw new Win32Exception((int)res);
+            return effectiveOverlayGuid;
+        }
+
+        public static void SetPowerMode(Guid powerModeId)
+        {
+            var res = PowerSetActiveOverlayScheme(powerModeId);
+            if (res != (uint)ErrorCode.SUCCESS)
+                throw new Win32Exception((int)res);
+        }
+
+
+
         /// <summary>
         /// Gets the friendly name of a power plan
         /// </summary>
@@ -55,18 +72,18 @@ namespace PowerManagerAPI
         public static string GetPlanName(Guid planId)
         {
             uint bufferSize = 255;
-            IntPtr buffer =  Marshal.AllocHGlobal((int)bufferSize);
+            IntPtr buffer = Marshal.AllocHGlobal((int)bufferSize);
 
             try
             {
                 var res = PowerReadFriendlyName(IntPtr.Zero, ref planId, IntPtr.Zero, IntPtr.Zero, buffer, ref bufferSize);
 
-                if (res == (uint)ErrorCode.MORE_DATA) 
+                if (res == (uint)ErrorCode.MORE_DATA)
                 {
                     // The buffer was too small. The API function has already updated the value that bufferSize points to 
                     // to be the needed size, so all we need is to create a buffer of that size and run the API call again.
                     Marshal.FreeHGlobal(buffer);
-                    buffer = Marshal.AllocHGlobal((int)bufferSize); 
+                    buffer = Marshal.AllocHGlobal((int)bufferSize);
                     res = PowerReadFriendlyName(IntPtr.Zero, ref planId, IntPtr.Zero, IntPtr.Zero, buffer, ref bufferSize);
                 }
 
@@ -86,7 +103,7 @@ namespace PowerManagerAPI
         /// </summary>
         /// <param name="planId">The Guid of the power plan</param>
         /// <param name="name">The new name</param>
-        public static void SetPlanName (Guid planId, string name)
+        public static void SetPlanName(Guid planId, string name)
         {
             name += char.MinValue; // Null-terminate the name string.
             uint bufferSize = (uint)Encoding.Unicode.GetByteCount(name);
@@ -159,7 +176,7 @@ namespace PowerManagerAPI
                 targetPlanId = Guid.NewGuid();
 
             var targetPlanPtr = Marshal.AllocHGlobal(Marshal.SizeOf(targetPlanId));
-            uint res; 
+            uint res;
 
             try
             {
@@ -235,6 +252,17 @@ namespace PowerManagerAPI
             return value;
         }
 
+        public static (uint ACValue, uint DCValue) GetActivePlanSetting(SettingSubgroup subgroup, Setting setting)
+        {
+            var plan = GetActivePlan();
+            return (GetPlanSetting(plan, subgroup, setting, PowerMode.AC), GetPlanSetting(plan, subgroup, setting, PowerMode.DC));
+        }
+
+        public static uint GetActivePlanSetting(SettingSubgroup subgroup, Setting setting, PowerMode powerMode)
+        {
+            return GetPlanSetting(GetActivePlan(), subgroup, setting, powerMode);
+        }
+
         /// <summary>
         /// Alters a setting on a power plan.
         /// </summary>
@@ -262,6 +290,40 @@ namespace PowerManagerAPI
             }
         }
 
+        public static void SetActivePlanSetting(SettingSubgroup subgroup, Setting setting, uint acValue, uint dcValue)
+        {
+            var plan = GetActivePlan();
+            SetPlanSetting(plan, subgroup, setting, PowerMode.AC, acValue);
+            SetPlanSetting(plan, subgroup, setting, PowerMode.DC, dcValue);
+            SetActivePlan(plan);
+        }
+
+        public static void SetActivePlanSetting(SettingSubgroup subgroup, Setting[] settings, uint acValue, uint dcValue)
+        {
+            var plan = GetActivePlan();
+            foreach (var setting in settings)
+            {
+                SetPlanSetting(plan, subgroup, setting, PowerMode.AC, acValue);
+                SetPlanSetting(plan, subgroup, setting, PowerMode.DC, dcValue);
+            }
+            SetActivePlan(plan);
+        }
+        public static void SetActivePlanSetting(SettingSubgroup subgroup, Setting setting, PowerMode powerMode, uint value)
+        {
+            var plan = GetActivePlan();
+            SetPlanSetting(plan, subgroup, setting, powerMode, value);
+            SetActivePlan(plan);
+        }
+
+        public static void SetAttribute(SettingSubgroup subgroup, Setting setting, uint value)
+        {
+            var subgroupId = SettingIdLookup.SettingSubgroupGuids[subgroup];
+            var settingId = SettingIdLookup.SettingGuids[setting];
+            var res = PowerWriteSettingAttributes(ref subgroupId, ref settingId, value);
+            if (res != (uint)ErrorCode.SUCCESS)
+                throw new Win32Exception((int)res);
+        }
+
         /// <summary>
         /// Creates a list of all the power plan Guids on this PC. The Guids can be used to look up more information (name, settings, etc.) about each plan.
         /// </summary>
@@ -278,7 +340,7 @@ namespace PowerManagerAPI
 
             while (ret == 0)
             {
-                buffer = Marshal.AllocHGlobal((int) bufferSize);
+                buffer = Marshal.AllocHGlobal((int)bufferSize);
 
                 try
                 {
@@ -290,6 +352,42 @@ namespace PowerManagerAPI
 
                     Guid guid = (Guid)Marshal.PtrToStructure(buffer, typeof(Guid));
                     powerPlans.Add(guid);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+
+                index++;
+            }
+
+            return powerPlans;
+        }
+
+        public static List<(Guid PlanId, string PlanName)> GetPlans()
+        {
+            var powerPlans = new List<(Guid PlanId, string PlanName)>();
+
+            IntPtr buffer;
+            uint bufferSize = 16;
+
+            uint index = 0;
+            uint ret = 0;
+
+            while (ret == 0)
+            {
+                buffer = Marshal.AllocHGlobal((int)bufferSize);
+
+                try
+                {
+                    ret = PowerEnumerate(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, AccessFlags.ACCESS_SCHEME, index, buffer, ref bufferSize);
+
+                    if (ret == (uint)ErrorCode.NO_MORE_ITEMS) break;
+                    if (ret != (uint)ErrorCode.SUCCESS)
+                        throw new Win32Exception((int)ret);
+
+                    Guid guid = (Guid)Marshal.PtrToStructure(buffer, typeof(Guid));
+                    powerPlans.Add((guid, GetPlanName(guid)));
                 }
                 finally
                 {
@@ -316,120 +414,151 @@ namespace PowerManagerAPI
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerEnumerate(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In, Optional]  IntPtr      SchemeGuid,
-            [In, Optional]  IntPtr      SubGroupOfPowerSettingsGuid,
-            [In]            AccessFlags AccessFlags,
-            [In]            uint        Index,
-            [Out, Optional] IntPtr      Buffer,
-            [In, Out]       ref uint    BufferSize
+            [In, Optional] IntPtr RootPowerKey,
+            [In, Optional] IntPtr SchemeGuid,
+            [In, Optional] IntPtr SubGroupOfPowerSettingsGuid,
+            [In] AccessFlags AccessFlags,
+            [In] uint Index,
+            [Out, Optional] IntPtr Buffer,
+            [In, Out] ref uint BufferSize
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerGetActiveScheme(
-            [In, Optional]  IntPtr      UserPowerKey,
-            [Out]           out IntPtr  ActivePolicyGuid
+            [In, Optional] IntPtr UserPowerKey,
+            [Out] out IntPtr ActivePolicyGuid
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerSetActiveScheme(
-            [In, Optional]  IntPtr      UserPowerKey,
-            [In]            ref Guid    ActivePolicyGuid
+            [In, Optional] IntPtr UserPowerKey,
+            [In] ref Guid ActivePolicyGuid
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerDuplicateScheme(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In]            ref Guid    SourceSchemeGuid,
-            [In]            ref IntPtr  DestinationSchemeGuid
+            [In, Optional] IntPtr RootPowerKey,
+            [In] ref Guid SourceSchemeGuid,
+            [In] ref IntPtr DestinationSchemeGuid
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerDeleteScheme(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In]            ref Guid    SchemeGuid
+            [In, Optional] IntPtr RootPowerKey,
+            [In] ref Guid SchemeGuid
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerReadFriendlyName(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In, Optional]  ref Guid    SchemeGuid,
-            [In, Optional]  IntPtr      SubGroupOfPowerSettingsGuid,
-            [In, Optional]  IntPtr      PowerSettingGuid,
-            [Out, Optional] IntPtr      Buffer,
-            [In, Out]       ref uint    BufferSize
+            [In, Optional] IntPtr RootPowerKey,
+            [In, Optional] ref Guid SchemeGuid,
+            [In, Optional] IntPtr SubGroupOfPowerSettingsGuid,
+            [In, Optional] IntPtr PowerSettingGuid,
+            [Out, Optional] IntPtr Buffer,
+            [In, Out] ref uint BufferSize
         );
 
         [DllImport("powrprof.dll", CharSet = CharSet.Unicode)]
         private static extern uint PowerWriteFriendlyName(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In]            ref Guid    SchemeGuid,
-            [In, Optional]  IntPtr      SubGroupOfPowerSettingsGuid,
-            [In, Optional]  IntPtr      PowerSettingGuid,
-            [In]            string      Buffer,
-            [In]            UInt32      BufferSize
+            [In, Optional] IntPtr RootPowerKey,
+            [In] ref Guid SchemeGuid,
+            [In, Optional] IntPtr SubGroupOfPowerSettingsGuid,
+            [In, Optional] IntPtr PowerSettingGuid,
+            [In] string Buffer,
+            [In] UInt32 BufferSize
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerReadDescription(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In, Optional]  ref Guid    SchemeGuid,
-            [In, Optional]  IntPtr      SubGroupOfPowerSettingsGuid,
-            [In, Optional]  IntPtr      PowerSettingGuid,
-            [Out, Optional] IntPtr      Buffer,
-            [In, Out]       ref uint    BufferSize
+            [In, Optional] IntPtr RootPowerKey,
+            [In, Optional] ref Guid SchemeGuid,
+            [In, Optional] IntPtr SubGroupOfPowerSettingsGuid,
+            [In, Optional] IntPtr PowerSettingGuid,
+            [Out, Optional] IntPtr Buffer,
+            [In, Out] ref uint BufferSize
         );
 
         [DllImport("powrprof.dll", CharSet = CharSet.Unicode)]
         private static extern uint PowerWriteDescription(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In]            ref Guid    SchemeGuid,
-            [In, Optional]  IntPtr      SubGroupOfPowerSettingsGuid,
-            [In, Optional]  IntPtr      PowerSettingGuid,
-            [In]            string      Buffer,
-            [In]            UInt32      BufferSize
+            [In, Optional] IntPtr RootPowerKey,
+            [In] ref Guid SchemeGuid,
+            [In, Optional] IntPtr SubGroupOfPowerSettingsGuid,
+            [In, Optional] IntPtr PowerSettingGuid,
+            [In] string Buffer,
+            [In] UInt32 BufferSize
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerReadACValueIndex(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In, Optional]  ref Guid    SchemeGuid,
-            [In, Optional]  ref Guid    SubGroupOfPowerSettingsGuid,
-            [In, Optional]  ref Guid    PowerSettingGuid,
-            [Out]           out uint    AcValueIndex
+            [In, Optional] IntPtr RootPowerKey,
+            [In, Optional] ref Guid SchemeGuid,
+            [In, Optional] ref Guid SubGroupOfPowerSettingsGuid,
+            [In, Optional] ref Guid PowerSettingGuid,
+            [Out] out uint AcValueIndex
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerWriteACValueIndex(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In]            ref Guid    SchemeGuid,
-            [In, Optional]  ref Guid    SubGroupOfPowerSettingsGuid,
-            [In, Optional]  ref Guid    PowerSettingGuid,
-            [In]            uint        AcValueIndex
+            [In, Optional] IntPtr RootPowerKey,
+            [In] ref Guid SchemeGuid,
+            [In, Optional] ref Guid SubGroupOfPowerSettingsGuid,
+            [In, Optional] ref Guid PowerSettingGuid,
+            [In] uint AcValueIndex
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerReadDCValueIndex(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In, Optional]  ref Guid    SchemeGuid,
-            [In, Optional]  ref Guid    SubGroupOfPowerSettingsGuid,
-            [In, Optional]  ref Guid    PowerSettingGuid,
-            [Out]           out uint    DcValueIndex
+            [In, Optional] IntPtr RootPowerKey,
+            [In, Optional] ref Guid SchemeGuid,
+            [In, Optional] ref Guid SubGroupOfPowerSettingsGuid,
+            [In, Optional] ref Guid PowerSettingGuid,
+            [Out] out uint DcValueIndex
         );
 
         [DllImport("powrprof.dll")]
         private static extern uint PowerWriteDCValueIndex(
-            [In, Optional]  IntPtr      RootPowerKey,
-            [In]            ref Guid    SchemeGuid,
-            [In, Optional]  ref Guid    SubGroupOfPowerSettingsGuid,
-            [In, Optional]  ref Guid    PowerSettingGuid,
-            [In]            uint        DcValueIndex
+            [In, Optional] IntPtr RootPowerKey,
+            [In] ref Guid SchemeGuid,
+            [In, Optional] ref Guid SubGroupOfPowerSettingsGuid,
+            [In, Optional] ref Guid PowerSettingGuid,
+            [In] uint DcValueIndex
+        );
+
+
+        [DllImport("powrprof.dll")]
+        private static extern uint PowerWriteSettingAttributes(
+            [In] ref Guid SubGroupOfPowerSettingsGuid,
+            [In] ref Guid PowerSettingGuid,
+            [In] uint Attributes
+        );
+
+        [DllImport("powrprof.dll", EntryPoint = "PowerGetActualOverlayScheme")]
+        public static extern uint PowerGetActualOverlayScheme(
+            [Out] out Guid ActualOverlayGuid);
+
+        /// <summary>
+        ///     Retrieves the active overlay power scheme and returns a GUID that identifies the scheme.
+        /// </summary>
+        /// <param name="EffectiveOverlayGuid">A pointer to a GUID structure.</param>
+        /// <returns>Returns zero if the call was successful, and a nonzero value if the call failed.</returns>
+        [DllImport("powrprof.dll", EntryPoint = "PowerGetEffectiveOverlayScheme")]
+        private static extern uint PowerGetEffectiveOverlayScheme(
+            [Out] out Guid EffectiveOverlayGuid);
+
+        /// <summary>
+        ///     Sets the active power overlay power scheme.
+        /// </summary>
+        /// <param name="OverlaySchemeGuid">The identifier of the overlay power scheme.</param>
+        /// <returns>Returns zero if the call was successful, and a nonzero value if the call failed.</returns>
+        [DllImport("powrprof.dll", EntryPoint = "PowerSetActiveOverlayScheme")]
+        private static extern uint PowerSetActiveOverlayScheme(
+            [In] Guid OverlaySchemeGuid
         );
 
 
         [DllImport("kernel32.dll")]
         private static extern IntPtr LocalFree(
-            [In]            IntPtr      hMem
+            [In] IntPtr hMem
         );
         #endregion
     }
